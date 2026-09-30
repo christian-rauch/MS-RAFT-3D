@@ -10,7 +10,6 @@
     "iterations": [4, 6, 8],
     "se3_neighborhood": 32,
     "adamw_eps": 1e-8,
-    "gpus": [0, 1, 2],
     "train": {
         "num_steps": [200000],
         "lr": [0.0002],

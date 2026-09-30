@@ -9,14 +9,14 @@ import torch.nn.functional as F
 
 
 class GridCholeskySolver(torch.autograd.Function):
-    
+
     @staticmethod
     def forward(ctx, chols, J, w, b):
         """ Solve linear system """
         B, H, W, M, N = J.shape
         D = b.shape[-1]
         bs = b.detach().reshape(B, -1, D).cpu().numpy()
-        
+
         xs = []
         for i in range(len(chols)):
             xs += [ chols[i](bs[i]) ]
@@ -37,7 +37,7 @@ class GridCholeskySolver(torch.autograd.Function):
 
         gs = grad_output.reshape(B, -1, D).cpu().numpy()
         chols = ctx.chols
-        
+
         dz = []
         for i in range(len(chols)):
             dz += [ chols[i](gs[i]) ]
@@ -49,7 +49,7 @@ class GridCholeskySolver(torch.autograd.Function):
 
         grad_J = torch.matmul(-w[...,None] * J.A(dz), J._unfold(xs).transpose(-1,-2)) + \
                  torch.matmul(-w[...,None] * J.A(xs), J._unfold(dz).transpose(-1,-2))
-        
+
         grad_w = -torch.sum(J.A(xs) * J.A(dz), -1)
 
         return None, grad_J, grad_w, dz
@@ -61,7 +61,7 @@ class GridFactor:
         self.factors = []
         self.weights = []
         self.residuals = []
-        
+
         self.chols = None
         self.Af = A
         self.wf = w
@@ -78,19 +78,19 @@ class GridFactor:
 
         A = torch.zeros([B, H, W, M, N, 2, 2]).to(device)
         w = torch.zeros([B, H, W, M]).to(device)
-        
+
         # unary factor
         if ftype == 'u':
             A[...,0,0] = Js[0]
             w[:] = ws[:]
-        
+
         # horizontal pairwise factor
         elif ftype == 'h':
             A[...,0,0] = Js[0]
             A[...,0,1] = Js[1]
             w[:, :, :-1, :] = ws[:, :, :-1, :]
 
-        # verticle pairwise factor 
+        # verticle pairwise factor
         elif ftype == 'v':
             A[...,0,0] = Js[0]
             A[...,1,0] = Js[1]

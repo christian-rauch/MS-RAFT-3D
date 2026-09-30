@@ -532,6 +532,9 @@ class TartanAirSceneFlowDataset(IterableDataset):
                 depths = depths[0]
                 poses = poses[0]
 
+                # invert colour channel order BGR -> RGB
+                images = images.flip(dims=[1])
+
                 if images.shape[0] != 2:
                     raise ValueError(
                         f"Expected two images, got "

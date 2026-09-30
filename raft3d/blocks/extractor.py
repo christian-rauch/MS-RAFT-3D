@@ -138,9 +138,10 @@ class FeatureEncoderBasic(nn.Module):
 
 
 class FeatureEncoderCCMR(nn.Module):
-    def __init__(self, output_dim=128, norm_fn='group', four_scales=False):
+    def __init__(self, output_dim=128, norm_fn='group', num_scales=3):
         super(FeatureEncoderCCMR, self).__init__()
-        self.four_scales = four_scales
+        assert num_scales in (2, 3, 4), f"FeatureEncoderCCMR only supports 2, 3 or 4 scales, got {num_scales}"
+        self.num_scales = num_scales
         self.norm_fn = norm_fn
         if self.norm_fn == 'group':
             self.norm1 = nn.GroupNorm(num_groups=8, num_channels=64)
@@ -162,11 +163,13 @@ class FeatureEncoderCCMR(nn.Module):
         self.conv2 = nn.Conv2d(160, 160, kernel_size=1)
 
         # bottom-up feature consolidation
-        self.up_layer2 = self._make_layer(160 + 128, 128, stride=1)
-        self.after_up_layer2_conv = nn.Conv2d(128, 128, kernel_size=1)
-        self.up_layer1 = self._make_layer(128 + 96, 96, stride=1)
-        self.after_up_layer1_conv = nn.Conv2d(96, 96, kernel_size=1)
-        if self.four_scales:
+        if self.num_scales >= 2:
+            self.up_layer2 = self._make_layer(160 + 128, 128, stride=1)
+            self.after_up_layer2_conv = nn.Conv2d(128, 128, kernel_size=1)
+        if self.num_scales >= 3:
+            self.up_layer1 = self._make_layer(128 + 96, 96, stride=1)
+            self.after_up_layer1_conv = nn.Conv2d(96, 96, kernel_size=1)
+        if self.num_scales >= 4:
             self.up_layer0 = self._make_layer(96 + 64, 64, stride=1)
             self.after_up_layer0_conv = nn.Conv2d(64, 64, kernel_size=1)
 
@@ -211,36 +214,40 @@ class FeatureEncoderCCMR(nn.Module):
         x = self.layer4(x)
         enc_out4 = x = self.conv2(x)
 
-        # uplayer2 (1/16 -> 1/8 resolution)
-        x = TF.resize(x, enc_out3.shape[-2:])
-        x = torch.cat((x, enc_out3), dim=1)
-        up2_out = x = self.after_up_layer2_conv(self.up_layer2(x))
+        outputs = [enc_out4]
 
-        # uplayer1 (1/8 -> 1/4 resolution)
-        x = TF.resize(x, enc_out2.shape[-2:])
-        x = torch.cat((x, enc_out2), dim=1)
-        up1_out = x = self.after_up_layer1_conv(self.up_layer1(x))
+        if self.num_scales >= 2:
+            # uplayer2 (1/16 -> 1/8 resolution)
+            x = TF.resize(x, enc_out3.shape[-2:])
+            x = torch.cat((x, enc_out3), dim=1)
+            up2_out = x = self.after_up_layer2_conv(self.up_layer2(x))
+            outputs.append(up2_out)
 
-        if self.four_scales:
+        if self.num_scales >= 3:
+            # uplayer1 (1/8 -> 1/4 resolution)
+            x = TF.resize(x, enc_out2.shape[-2:])
+            x = torch.cat((x, enc_out2), dim=1)
+            up1_out = x = self.after_up_layer1_conv(self.up_layer1(x))
+            outputs.append(up1_out)
+
+        if self.num_scales >= 4:
             # uplayer0 (1/4 -> 1/2 resolution)
             x = TF.resize(x, enc_out1.shape[-2:])
             x = torch.cat((x, enc_out1), dim=1)
             up0_out = x = self.after_up_layer0_conv(self.up_layer0(x))
+            outputs.append(up0_out)
 
         if is_list:
-            enc_out4 = torch.split(enc_out4, [batch_dim, batch_dim], dim=0)
-            up2_out = torch.split(up2_out, [batch_dim, batch_dim], dim=0)
-            up1_out = torch.split(up1_out, [batch_dim, batch_dim], dim=0)
-            if self.four_scales:
-                up0_out = torch.split(up0_out, [batch_dim, batch_dim], dim=0)
+            outputs = [torch.split(o, [batch_dim, batch_dim], dim=0) for o in outputs]
 
-        return [enc_out4, up2_out, up1_out, up0_out] if self.four_scales else [enc_out4, up2_out, up1_out]
+        return outputs
 
 
 class ContextEncoderBasic(nn.Module):
-    def __init__(self, output_dim=512, channels=[64, 96, 128, 192, 256], norm_fn='group', four_scales=False):
+    def __init__(self, output_dim=512, channels=[64, 96, 128, 192, 256], norm_fn='group', num_scales=3):
         super(ContextEncoderBasic, self).__init__()
-        self.four_scales = four_scales
+        assert num_scales in (2, 3, 4), f"ContextEncoderBasic only supports 2, 3 or 4 scales, got {num_scales}"
+        self.num_scales = num_scales
         self.norm_fn = norm_fn
         if self.norm_fn == 'group':
             self.norm1 = nn.GroupNorm(num_groups=8, num_channels=channels[0])
@@ -256,10 +263,11 @@ class ContextEncoderBasic(nn.Module):
         self.relu1 = nn.ReLU(inplace=True)
 
         self.layer1 = self._make_layer(channels[0], channels[1], stride=1)
-        if self.four_scales:
+        if self.num_scales >= 4:
             self.out_cov1 = nn.Conv2d(channels[1], output_dim, kernel_size=1)
         self.layer2 = self._make_layer(channels[1], channels[2], stride=2)
-        self.out_cov2 = nn.Conv2d(channels[2], output_dim, kernel_size=1)
+        if self.num_scales >= 3:
+            self.out_cov2 = nn.Conv2d(channels[2], output_dim, kernel_size=1)
         self.layer3 = self._make_layer(channels[2], channels[3], stride=2)
         self.out_cov3 = nn.Conv2d(channels[3], output_dim, kernel_size=1)
         self.layer4 = self._make_layer(channels[3], channels[4], stride=2)
@@ -300,23 +308,26 @@ class ContextEncoderBasic(nn.Module):
         # enc_out3 -> 1/8 resolution, enc_out4 -> 1/16 resolution
 
         x = self.layer1(x)
-        if self.four_scales:
+        if self.num_scales >= 4:
             enc_out1 = self.out_cov1(x)
         x = self.layer2(x)
-        enc_out2 = self.out_cov2(x)
+        if self.num_scales >= 3:
+            enc_out2 = self.out_cov2(x)
         x = self.layer3(x)
         enc_out3 = self.out_cov3(x)
         x = self.layer4(x)
         enc_out4 = self.out_cov4(x)
 
-        if is_list:
-            enc_out4 = torch.split(enc_out4, [batch_dim, batch_dim], dim=0)
-            enc_out3 = torch.split(enc_out3, [batch_dim, batch_dim], dim=0)
-            enc_out2 = torch.split(enc_out2, [batch_dim, batch_dim], dim=0)
-            if self.four_scales:
-                enc_out1 = torch.split(enc_out1, [batch_dim, batch_dim], dim=0)
+        outputs = [enc_out4, enc_out3]
+        if self.num_scales >= 3:
+            outputs.append(enc_out2)
+        if self.num_scales >= 4:
+            outputs.append(enc_out1)
 
-        return [enc_out4, enc_out3, enc_out2, enc_out1] if self.four_scales else [enc_out4, enc_out3, enc_out2]
+        if is_list:
+            outputs = [torch.split(o, [batch_dim, batch_dim], dim=0) for o in outputs]
+
+        return outputs
 
 
 class ContextEncoderFPN(nn.Module):

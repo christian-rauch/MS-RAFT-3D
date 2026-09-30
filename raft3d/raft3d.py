@@ -23,10 +23,13 @@ class RAFT3D(nn.Module):
         hdim = config['hidden_dim']
         cdim = config['context_dim']
 
+        num_scales = len(config['iterations'])
+        assert num_scales in (2, 3, 4), f"iterations must define 2, 3 or 4 scales, got {num_scales}"
+
         # feature network, context network, and update block
-        if len(config['iterations']) == 4:
-            assert config['feature_encoder'] == 'ccmr', 'The 4-scale model only implements the ccmr feature encoder'
-            self.fnet = FeatureEncoderCCMR(norm_fn='instance', four_scales=True)
+        if num_scales != 3:
+            assert config['feature_encoder'] == 'ccmr', f'The {num_scales}-scale model only implements the ccmr feature encoder'
+            self.fnet = FeatureEncoderCCMR(norm_fn='instance', num_scales=num_scales)
         elif config['feature_encoder'] == 'basic':
             self.fnet = FeatureEncoderBasic()
         elif config['feature_encoder'] == 'ccmr':
@@ -36,9 +39,9 @@ class RAFT3D(nn.Module):
 
         context_encoder_channels = self.config["context_encoder_dim"] if self.config["context_encoder_dim"] is not None else [64, 96, 128, 192, 256]
 
-        if len(config['iterations']) == 4:
-            assert config['context_encoder'] == 'basic', 'The 4-scale model only implements the basic context encoder'
-            self.cnet = ContextEncoderBasic(output_dim=hdim+cdim, channels=context_encoder_channels, four_scales=True)
+        if num_scales != 3:
+            assert config['context_encoder'] == 'basic', f'The {num_scales}-scale model only implements the basic context encoder'
+            self.cnet = ContextEncoderBasic(output_dim=hdim+cdim, channels=context_encoder_channels, num_scales=num_scales)
         elif config['context_encoder'] == 'basic':
             self.cnet = ContextEncoderBasic(output_dim=hdim+cdim, channels=context_encoder_channels)
         elif config['context_encoder'] == 'fpn':
@@ -183,9 +186,8 @@ class RAFT3D(nn.Module):
             return flow_est_list, flow_rev_list
 
         if len(iters) < 4:
-            Ts_up = upsample_se3(Ts, mask, bilinear_scale_factor=2)
+            Ts_up = upsample_se3(Ts, mask, bilinear_scale_factor=2**(4 - len(iters)))
         else:
             Ts_up = upsample_se3(Ts, mask)
 
         return Ts_up
-

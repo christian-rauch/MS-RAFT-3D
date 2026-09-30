@@ -19,7 +19,7 @@ class GridCholeskySolver(torch.autograd.Function):
 
         xs = []
         for i in range(len(chols)):
-            xs += [ chols[i](bs[i]) ]
+            xs += [chols[i].solve(bs[i])]
 
         xs = np.stack(xs).astype(np.float32)
         xs = torch.from_numpy(xs).to(J.device)
@@ -40,7 +40,7 @@ class GridCholeskySolver(torch.autograd.Function):
 
         dz = []
         for i in range(len(chols)):
-            dz += [ chols[i](gs[i]) ]
+            dz += [chols[i].solve(gs[i])]
 
         dz = np.stack(dz, axis=0).astype(np.float32)
         dz = torch.from_numpy(dz).to(J.device).view(*xs.shape)
@@ -187,12 +187,16 @@ class GridFactor:
             As = self.to_csc()
 
             if sym_factor is None or As[0].shape != sym_shape:
-                sym_factor = cholmod.analyze_AAt(As[0], ordering_method='best')
+                sym_factor = cholmod.CholeskyFactor(
+                    As[0],
+                    sym_kind='row',
+                    order='best'
+                )
                 sym_shape = As[0].shape
 
             for A in As:
-                chol = sym_factor.cholesky_AAt(A)
-                self.chols.append(chol)
+                sym_factor.factorize(A)
+                self.chols.append(sym_factor.copy())
 
         return self.chols, sym_factor, sym_shape
 

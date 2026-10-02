@@ -190,7 +190,7 @@ class GridFactor:
                 sym_factor = cholmod.CholeskyFactor(
                     As[0],
                     sym_kind='row',
-                    order='best'
+                    order='amd'
                 )
                 sym_shape = As[0].shape
 

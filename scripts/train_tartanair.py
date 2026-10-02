@@ -121,7 +121,7 @@ def train_phase(dataloader, model, optimizer, scheduler, phase, logger, config, 
                 keep_training = False
                 break
 
-def train(config):
+def train(config, frameskip=1):
     initial_phase = config["initial_phase"]
     passed_steps = initial_step = config["initial_step"]
     if config["initial_phase"] != 0:
@@ -150,7 +150,7 @@ def train(config):
             difficulties=["easy"],
             trajectories=["P000", "P001", "P002", "P003", "P004", "P005", "P006"],
             camera="lcam_front",
-            frame_sep=1,
+            frame_sep=frameskip,
             loader_workers=1,
             batch_size=2,
         )
@@ -163,6 +163,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', help='Training configuration file')
     parser.add_argument('--ckpt', help='Checkpoint to restore')
+    parser.add_argument('--frameskip', type=int, default=1, help='Frame separation for the dataloader')
     parser.add_argument('--initial_step', type=int, default=0, help='Number of steps the checkpoint has already trained')
     parser.add_argument('--initial_phase', type=int, default=0, help='Number of phases the checkpoint has already trained')
     parser.add_argument('--save', default='checkpoints', help='Folder for saving checkpoints')
@@ -175,4 +176,4 @@ if __name__ == '__main__':
     config = load_config(args)
 
     print(config)
-    train(config)
+    train(config, frameskip=args.frameskip)

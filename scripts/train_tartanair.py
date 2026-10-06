@@ -39,6 +39,7 @@ def save_model(model, optimizer, config, phase, current_step):
 def fetch_model(config):
     model = torch.nn.DataParallel(RAFT3D(config), device_ids=config["gpus"])
     if config["checkpoint_load_path"] is not None:
+        print("restore model from", config["checkpoint_load_path"])
         model.load_state_dict(torch.load(config["checkpoint_load_path"]))
 
     model.cuda()
@@ -51,6 +52,7 @@ def fetch_optimizer(config, phase, model):
     optimizer = optim.Adam(model.parameters(), lr=config["train"]["lr"][phase], weight_decay=config["train"]["wdecay"][phase], eps=config["adamw_eps"])
     if config["checkpoint_load_path"] is not None:
         optimizer_load_path = f"{config['checkpoint_load_path'][:-4]}_optimizer.pth"
+        print("restore optimiser from", optimizer_load_path)
         if os.path.isfile(optimizer_load_path):
             optimizer.load_state_dict(torch.load(optimizer_load_path))
 

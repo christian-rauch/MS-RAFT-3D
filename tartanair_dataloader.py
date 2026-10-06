@@ -490,153 +490,159 @@ class TartanAirSceneFlowDataset(IterableDataset):
         """
         Iterate over all trajectories supplied to the TartanAir loader.
 
-        TartanAir itself handles the trajectory switching. The returned
-        pose modality is used directly for scene-flow computation.
+        If loading or processing an individual sample fails, the sample is
+        skipped and iteration continues with the next sample.
         """
 
         try:
             while True:
-
-                # ------------------------------------------------------
-                # Load next pair.
-                # ------------------------------------------------------
-
                 try:
+                    # ------------------------------------------------------
+                    # Load next pair.
+                    # ------------------------------------------------------
+
                     batch = tartanair_loader.load_sample()
+
+                    images = batch[
+                        f"image_{self.camera}"
+                    ]
+
+                    depths = batch[
+                        f"depth_{self.camera}"
+                    ]
+
+                    poses = batch[
+                        f"pose_{self.camera}"
+                    ]
+
+                    # ------------------------------------------------------
+                    # Remove TartanAir batch dimension.
+                    #
+                    # Expected:
+                    #
+                    #   images: [1, 2, 3, H, W]
+                    #   depths: [1, 2, H, W]
+                    #   poses:  [1, 2, 7]
+                    # ------------------------------------------------------
+
+                    images = images[0]
+                    depths = depths[0]
+                    poses = poses[0]
+
+                    # BGR -> RGB
+                    images = images.flip(dims=[1])
+
+                    if images.shape[0] != 2:
+                        raise ValueError(
+                            f"Expected two images, got "
+                            f"shape {images.shape}"
+                        )
+
+                    if depths.shape[0] != 2:
+                        raise ValueError(
+                            f"Expected two depth maps, got "
+                            f"shape {depths.shape}"
+                        )
+
+                    if poses.shape[0] != 2:
+                        raise ValueError(
+                            f"Expected two poses, got "
+                            f"shape {poses.shape}"
+                        )
+
+                    image1 = images[0].float()
+                    image2 = images[1].float()
+
+                    depth1 = depths[0].float()
+                    depth2 = depths[1].float()
+
+                    # ------------------------------------------------------
+                    # Convert poses:
+                    #
+                    # TartanAir NED -> OpenCV
+                    # ------------------------------------------------------
+
+                    pose1 = torch.from_numpy(
+                        self.pose_to_matrix(
+                            poses[0].cpu().numpy()
+                        )
+                    ).float()
+
+                    pose2 = torch.from_numpy(
+                        self.pose_to_matrix(
+                            poses[1].cpu().numpy()
+                        )
+                    ).float()
+
+                    # ------------------------------------------------------
+                    # Intrinsics.
+                    # ------------------------------------------------------
+
+                    intrinsics = self._get_intrinsics(
+                        image1
+                    )
+
+                    # ------------------------------------------------------
+                    # Compute camera-induced optical flow and
+                    # RAFT-3D scene flow.
+                    # ------------------------------------------------------
+
+                    flow_gt, valid_gt, flowxyz = (
+                        self._compute_scene_flow(
+                            depth1=depth1,
+                            pose1=pose1,
+                            pose2=pose2,
+                            intrinsics=intrinsics,
+                        )
+                    )
+
+                    valid_scene = valid_gt.clone()
+
+                    # ------------------------------------------------------
+                    # Return sample.
+                    # ------------------------------------------------------
+
+                    yield {
+                        "image1": image1,
+                        "image2": image2,
+
+                        "depth1": depth1,
+                        "depth2": depth2,
+
+                        "flow_gt": flow_gt,
+                        "valid_gt": valid_gt,
+
+                        "flowxyz": flowxyz,
+                        "valid_scene": valid_scene,
+
+                        "pose1": pose1,
+                        "pose2": pose2,
+
+                        "intrinsics": intrinsics,
+                        "frame_sep": self.frame_sep,
+                        "camera": self.camera,
+                    }
+
                 except StopIteration:
+                    # Normal end of the TartanAir loader.
                     break
 
-                images = batch[
-                    f"image_{self.camera}"
-                ]
+                except Exception as exc:
+                    # ------------------------------------------------------
+                    # A single sample is broken. Skip it and continue.
+                    #
+                    # This catches errors such as corrupted PNG files,
+                    # malformed depth maps, invalid poses, etc.
+                    # ------------------------------------------------------
 
-                depths = batch[
-                    f"depth_{self.camera}"
-                ]
-
-                poses = batch[
-                    f"pose_{self.camera}"
-                ]
-
-                # ------------------------------------------------------
-                # Remove TartanAir batch dimension.
-                #
-                # Expected:
-                #
-                #   images: [1, 2, 3, H, W]
-                #   depths: [1, 2, H, W]
-                #   poses:  [1, 2, 7]
-                # ------------------------------------------------------
-
-                images = images[0]
-                depths = depths[0]
-                poses = poses[0]
-
-                # invert colour channel order BGR -> RGB
-                images = images.flip(dims=[1])
-
-                if images.shape[0] != 2:
-                    raise ValueError(
-                        f"Expected two images, got "
-                        f"shape {images.shape}"
+                    print(
+                        f"[TartanAirSceneFlowDataset] "
+                        f"Skipping sample because of error: "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
                     )
 
-                if depths.shape[0] != 2:
-                    raise ValueError(
-                        f"Expected two depth maps, got "
-                        f"shape {depths.shape}"
-                    )
-
-                if poses.shape[0] != 2:
-                    raise ValueError(
-                        f"Expected two poses, got "
-                        f"shape {poses.shape}"
-                    )
-
-                image1 = images[0].float()
-                image2 = images[1].float()
-
-                depth1 = depths[0].float()
-                depth2 = depths[1].float()
-
-                # ------------------------------------------------------
-                # Convert poses:
-                #
-                #   TartanAir NED
-                #
-                # to:
-                #
-                #   OpenCV
-                #
-                # and return camera-to-world transforms.
-                # ------------------------------------------------------
-
-                pose1 = torch.from_numpy(
-                    self.pose_to_matrix(
-                        poses[0].cpu().numpy()
-                    )
-                ).float()
-
-                pose2 = torch.from_numpy(
-                    self.pose_to_matrix(
-                        poses[1].cpu().numpy()
-                    )
-                ).float()
-
-                # ------------------------------------------------------
-                # Intrinsics.
-                # ------------------------------------------------------
-
-                intrinsics = self._get_intrinsics(
-                    image1
-                )
-
-                # ------------------------------------------------------
-                # Compute camera-induced optical flow and
-                # RAFT-3D scene flow analytically.
-                # ------------------------------------------------------
-
-                flow_gt, valid_gt, flowxyz = (
-                    self._compute_scene_flow(
-                        depth1=depth1,
-                        pose1=pose1,
-                        pose2=pose2,
-                        intrinsics=intrinsics,
-                    )
-                )
-
-                # The scene-flow validity is the same geometric
-                # validity mask used for the optical flow.
-                valid_scene = valid_gt.clone()
-
-                # ------------------------------------------------------
-                # Return sample.
-                # ------------------------------------------------------
-
-                yield {
-                    "image1": image1,
-                    "image2": image2,
-
-                    "depth1": depth1,
-                    "depth2": depth2,
-
-                    # Camera-induced optical flow.
-                    "flow_gt": flow_gt,
-                    "valid_gt": valid_gt,
-
-                    # RAFT-3D scene-flow representation.
-                    "flowxyz": flowxyz,
-                    "valid_scene": valid_scene,
-
-                    # Camera-to-world poses in OpenCV convention.
-                    "pose1": pose1,
-                    "pose2": pose2,
-
-                    # [fx, fy, cx, cy]
-                    "intrinsics": intrinsics,
-                    "frame_sep": self.frame_sep,
-                    "camera": self.camera,
-                }
+                    continue
 
         finally:
             tartanair_loader.stop_cachers()

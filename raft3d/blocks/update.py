@@ -129,12 +129,24 @@ class BasicUpdateBlockBilaplacian(nn.Module):
         ae = self.ae_enc(ae)
         net = self.gru(net, inp, cor, mot, ae)
 
+        # <-- CHECK 1: did the GRU output already explode?
+        assert torch.isfinite(net).all(), \
+            f"net not finite: min={net.min()}, max={net.max()}"
+
         ae = self.ae(net)
         mask = self.mask(net)
         delta = self.delta(net)
         weight = self.weight(net)
 
         edges = 5 * self.ae_wts(net)
+
+        # <-- CHECK 2: these become the solver weights (wx, wy)
+        assert torch.isfinite(edges).all(), "edges not finite"
+        print("edges range:", edges.min().item(), edges.max().item())
+
+        # <-- CHECK 3: this becomes the right-hand side (ru)
+        assert torch.isfinite(ae).all(), "ae not finite"
+
         ae = self.solver(ae, edges)
 
         return net, mask, ae, delta, weight

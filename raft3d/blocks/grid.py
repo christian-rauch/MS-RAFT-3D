@@ -170,9 +170,6 @@ class GridFactor:
             wsqrt = self.wf.detach().sqrt().view(B, H*W*N, 1)
             vals = (wsqrt * A).cpu().numpy()
 
-            # <-- CHECK 4: exactly what CHOLMOD will see
-            assert np.isfinite(vals).all(), "non-finite values in sparse matrix"
-
             sparse_matricies = []
             for batch_ix in range(B):
                 data = (vals[batch_ix].reshape(-1), col_idx, row_idx)
